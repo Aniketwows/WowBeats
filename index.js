@@ -1,174 +1,180 @@
-const {
-  Client,
-  GatewayIntentBits,
-  ActivityType,
-  SlashCommandBuilder,
-  Routes,
-  EmbedBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle
-} = require("discord.js");
-const { REST } = require("@discordjs/rest");
+require("dotenv").config();
+const { Client, GatewayIntentBits } = require("discord.js");
+const mongoose = require("mongoose");
+
+const TOKEN = process.env.BOT_TOKEN;
+const ADMIN_ID = process.env.ADMIN_ID;
+const MONGO_URI = process.env.MONGO_URI;
+
+// ✅ Mongo Schema
+const fileSchema = new mongoose.Schema(
+  {
+    clientId: { type: String, required: true }, // discord user id
+    name: { type: String, required: true }, // file name
+    link: { type: String, required: true }, // file link
+    savedBy: { type: String, required: true }, // admin id
+  },
+  { timestamps: true }
+);
+
+fileSchema.index({ clientId: 1, name: 1 }, { unique: false });
+
+const FileModel = mongoose.model("ClientFiles", fileSchema);
+
+// ✅ Drive view link -> direct download (optional)
+function convertDriveLink(link) {
+  const match = link.match(/drive\.google\.com\/file\/d\/([^/]+)\//);
+  if (match && match[1]) {
+    return `https://drive.google.com/uc?export=download&id=${match[1]}`;
+  }
+  return link;
+}
+
+// ✅ Extract userId from mention
+function extractUserId(mention) {
+  return mention.replace(/[<@!>]/g, "");
+}
 
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.DirectMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages
-  ]
+  ],
 });
 
-/* ================= CONFIG ================= */
-const ROLE_NAME = "Aniketshare/Noti";
-const BRAND_COLOR = 0x595967;
-const SEPARATOR = "----------------";
-
-/* ================= AUTO STATUS ================= */
-const statuses = [
-  { name: "Designing in Photoshop 🎨", type: ActivityType.Playing },
-  { name: "Turning Ideas into Art ✨", type: ActivityType.Watching },
-  { name: "Creative Mode: ON ⚡", type: ActivityType.Listening }
-];
-let statusIndex = 0;
-
-/* ================= SLASH COMMAND ================= */
-const commands = [
-  new SlashCommandBuilder()
-    .setName("noti")
-    .setDescription("Send professional DM notification")
-    .setDefaultMemberPermissions(0)
-    .addUserOption(o =>
-      o.setName("user").setDescription("User to notify").setRequired(true)
-    )
-    .addStringOption(o =>
-      o.setName("project").setDescription("Project name").setRequired(false)
-    )
-    .addStringOption(o =>
-      o
-        .setName("filename")
-        .setDescription("File names (use | for multiple)")
-        .setRequired(false)
-    )
-    .addStringOption(o =>
-      o.setName("status").setDescription("Status").setRequired(false)
-    )
-    .addStringOption(o =>
-      o.setName("size").setDescription("File size").setRequired(false)
-    )
-    .addStringOption(o =>
-      o
-        .setName("link")
-        .setDescription("File link (button only)")
-        .setRequired(false)
-    )
-].map(c => c.toJSON());
-
-const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
-
-/* ================= READY ================= */
-client.once("clientReady", async () => {
+client.on("ready", () => {
   console.log(`✅ Bot Online: ${client.user.tag}`);
-  client.user.setStatus("online");
-
-  setInterval(() => {
-    const s = statuses[statusIndex];
-    client.user.setActivity(s.name, { type: s.type });
-    statusIndex = (statusIndex + 1) % statuses.length;
-  }, 10000);
-
-  await rest.put(
-    Routes.applicationCommands(client.user.id),
-    { body: commands }
-  );
-
-  console.log("✅ /noti command registered");
 });
 
-/* ================= COMMAND HANDLER ================= */
-client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== "noti") return;
+// ✅ DM ONLY handler
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+  if (message.guild) return; // server messages ignore
 
-  if (!interaction.member.roles.cache.some(r => r.name === ROLE_NAME)) {
-    return interaction.reply({
-      content: "❌ You don't have permission to use this command.",
-      ephemeral: true
-    });
-  }
+  const text = message.content.trim();
+  const lower = text.toLowerCase();
 
-  const user = interaction.options.getUser("user");
-
-  const project = interaction.options.getString("project") || "—";
-  const status  = interaction.options.getString("status") || "In progress";
-  const size    = interaction.options.getString("size") || "N/A";
-  const link    = interaction.options.getString("link");
-
-  /* ===== FILE LIST ( | → multiline ) ===== */
-  const fileInput = interaction.options.getString("filename") || "—";
-  const files = fileInput.includes("|")
-    ? fileInput
-        .split("|")
-        .map(f => `• ${f.trim()}`)
-        .join("\n")
-    : fileInput;
-
-  /* ========== EMBED ========== */
-  const embed = new EmbedBuilder()
-    .setColor(BRAND_COLOR)
-    .setAuthor({
-      name: `Notification from AniketwOw `,
-      iconURL: interaction.guild.iconURL({ dynamic: true })
-    })
-    .setDescription(
-      `**Project:** ${project}\n` +
-      `${SEPARATOR}\n` +
-      `**Files:**\n${files}\n` +
-      `${SEPARATOR}\n` +
-      `Status: ${status}\n` +
-      `Size: ${size}`
-    )
-    .setTimestamp();
-
-  /* ========== BUTTON ========== */
-  const components = [];
-
-  if (link) {
-    components.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setLabel("📥 Open Files")
-          .setStyle(ButtonStyle.Link)
-          .setURL(link.trim())
-      )
+  // HELP
+  if (lower === "help") {
+    return message.reply(
+      `✅ **Commands**\n\n` +
+        `👤 **Client:**\n` +
+        `• list\n` +
+        `• get <FileName>\n\n` +
+        `🛠️ **Admin:**\n` +
+        `• save @client <FileName> <Link>\n` +
+        `• list @client\n\n` +
+        `Example:\nsave @Rahul LogoFinal https://drive.google.com/file/d/xxx/view`
     );
   }
 
-  try {
-    await user.send({ embeds: [embed], components });
+  // ✅ ADMIN SAVE
+  // save @client FileName Link
+  if (lower.startsWith("save ")) {
+    if (message.author.id !== ADMIN_ID) {
+      return message.reply("❌ Only Admin can save files.");
+    }
 
-    await interaction.reply({
-      content: `✅ Notification sent to **${user.tag}**`,
-      ephemeral: true
-    });
-  } catch {
-    await interaction.reply({
-      content: "❌ User ke DMs closed hain.",
-      ephemeral: true
-    });
+    const parts = text.split(" ");
+    if (parts.length < 4) {
+      return message.reply(
+        "✅ Format:\nsave @client FileName Link\nExample:\nsave @Rahul LogoFinal https://drive.google.com/file/d/xxx/view"
+      );
+    }
+
+    const mention = parts[1];
+    const fileName = parts[2];
+    const link = parts.slice(3).join(" ");
+
+    const clientId = extractUserId(mention);
+    const finalLink = convertDriveLink(link);
+
+    try {
+      await FileModel.create({
+        clientId,
+        name: fileName,
+        link: finalLink,
+        savedBy: message.author.id,
+      });
+
+      return message.reply(`✅ Saved for <@${clientId}> : **${fileName}**`);
+    } catch (err) {
+      console.log(err);
+      return message.reply("❌ Error saving file. (Maybe DB issue)");
+    }
   }
+
+  // ✅ CLIENT LIST
+  if (lower === "list") {
+    const files = await FileModel.find({ clientId: message.author.id }).sort({
+      createdAt: -1,
+    });
+
+    if (!files.length) {
+      return message.reply("❌ No files saved for you yet.");
+    }
+
+    let reply = "📂 **Your Saved Files:**\n";
+    files.forEach((f, i) => {
+      reply += `${i + 1}) **${f.name}**\n`;
+    });
+
+    reply += `\nType: **get FileName**`;
+    return message.reply(reply);
+  }
+
+  // ✅ CLIENT GET
+  if (lower.startsWith("get ")) {
+    const fileName = text.split(" ").slice(1).join(" ");
+
+    const file = await FileModel.findOne({
+      clientId: message.author.id,
+      name: new RegExp(`^${fileName}$`, "i"),
+    });
+
+    if (!file) {
+      return message.reply("❌ File not found. Type **list** to see your files.");
+    }
+
+    return message.reply(`✅ **${file.name}**\n🔗 ${file.link}`);
+  }
+
+  // ✅ ADMIN LIST FOR CLIENT
+  // list @client
+  if (lower.startsWith("list ")) {
+    if (message.author.id !== ADMIN_ID) {
+      return message.reply("❌ Only Admin can list other clients.");
+    }
+
+    const parts = text.split(" ");
+    const mention = parts[1];
+    const clientId = extractUserId(mention);
+
+    const files = await FileModel.find({ clientId }).sort({ createdAt: -1 });
+
+    if (!files.length) {
+      return message.reply(`❌ No files saved for <@${clientId}> yet.`);
+    }
+
+    let reply = `📂 **Files saved for <@${clientId}>:**\n`;
+    files.forEach((f, i) => {
+      reply += `${i + 1}) **${f.name}** → ${f.link}\n`;
+    });
+
+    return message.reply(reply);
+  }
+
+  // fallback
+  return message.reply("❓ Unknown command. Type **help**");
 });
 
-/* ================= TEST ================= */
-client.on("messageCreate", msg => {
-  if (msg.author.bot) return;
-  if (msg.content === "!ping") msg.reply("🏓 Pong!");
-});
-
-client.login(process.env.TOKEN);
-
-
-
-
-
+// ✅ Connect DB then start bot
+(async () => {
+  try {
+    await mongoose.connect(MONGO_URI);
+    console.log("✅ MongoDB Connected");
+    await client.login(TOKEN);
+  } catch (err) {
+    console.error("❌ Startup Error:", err);
+  }
+})();
